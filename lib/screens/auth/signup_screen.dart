@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:form_validator/form_validator.dart';
+import '../../services/auth_service.dart';
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -16,6 +18,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+  final AuthService _authService = AuthService();
+  final _nameValidator = ValidationBuilder().required('Name is required').build();
+  final _emailValidator = ValidationBuilder()
+      .required('Email is required')
+      .email('Enter a valid email')
+      .build();
+  final _passwordValidator = ValidationBuilder()
+      .required('Password is required')
+      .minLength(6, 'Password must be at least 6 characters')
+      .build();
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   bool _isLoading = false;
@@ -42,33 +54,78 @@ class _SignUpScreenState extends State<SignUpScreen> {
     });
   }
 
-  void _submitForm() {
+  Future<void> _submitForm() async {
+    // Close keyboard if open
+    FocusScope.of(context).unfocus();
+    
     if (_formKey.currentState?.validate() ?? false) {
       if (!_termsAccepted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Please accept the terms and conditions'),
-            backgroundColor: Colors.red,
-          ),
-        );
+        _showErrorSnackBar('Please accept the terms and conditions');
         return;
       }
-      
+
+      if (_passwordController.text != _confirmPasswordController.text) {
+        _showErrorSnackBar('Passwords do not match');
+        return;
+      }
+
       setState(() => _isLoading = true);
-      // Simulate API call
-      Future.delayed(const Duration(seconds: 2), () {
-        if (!mounted) return;
-        
-        setState(() => _isLoading = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Account created successfully!'),
-            backgroundColor: Colors.green,
-          ),
+      
+      try {
+        await _authService.registerWithEmailAndPassword(
+          _emailController.text.trim(),
+          _passwordController.text.trim(),
+          _nameController.text.trim(),
         );
-        // Navigate back to login screen
-        Navigator.pop(context);
-      });
+        
+        if (mounted) {
+          _showSuccessSnackBar('Account created successfully!');
+          // Wait a bit before navigating to show success message
+          await Future.delayed(const Duration(seconds: 1));
+          Navigator.pushReplacementNamed(context, '/home');
+        }
+      } catch (e) {
+        // The error message is now more descriptive from the auth service
+        _showErrorSnackBar(e.toString());
+      } finally {
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
+      }
+    }
+  }
+
+  void _showErrorSnackBar(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.red,
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      );
+    }
+  }
+
+  void _showSuccessSnackBar(String message) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
+          margin: const EdgeInsets.all(16),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      );
     }
   }
 
@@ -143,12 +200,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   fillColor: Colors.white,
                   contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
                 ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter your name';
-                  }
-                  return null;
-                },
+                validator: _nameValidator,
               ).animate().fadeIn(delay: 250.ms),
               
               const SizedBox(height: 16),
@@ -177,15 +229,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   fillColor: Colors.white,
                   contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
                 ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter your email';
-                  }
-                  if (!value.contains('@') || !value.contains('.')) {
-                    return 'Please enter a valid email';
-                  }
-                  return null;
-                },
+                validator: _emailValidator,
               ).animate().fadeIn(delay: 350.ms),
               
               const SizedBox(height: 16),
@@ -221,15 +265,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   fillColor: Colors.white,
                   contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
                 ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter a password';
-                  }
-                  if (value.length < 6) {
-                    return 'Password must be at least 6 characters';
-                  }
-                  return null;
-                },
+                validator: _passwordValidator,
               ).animate().fadeIn(delay: 450.ms),
               
               const SizedBox(height: 16),
