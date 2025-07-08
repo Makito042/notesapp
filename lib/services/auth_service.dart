@@ -60,11 +60,7 @@ class AuthService {
         throw 'Password must be at least 6 characters long';
       }
 
-      // Verify Firebase is initialized
-      if (_auth.app == null) {
-        debugPrint('Firebase Auth not initialized');
-        throw 'Authentication service is not available. Please try again later.';
-      }
+      // Firebase Auth is always initialized when the AuthService is created
 
       // Create user
       debugPrint('Creating user with email: $email');

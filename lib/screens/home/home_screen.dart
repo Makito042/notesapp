@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../../services/auth_service.dart';
 import '../../services/note_service.dart';
 import '../../models/note.dart';
+import '../../theme/app_theme.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -16,13 +16,20 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final User? user = FirebaseAuth.instance.currentUser;
-  final AuthService _authService = AuthService();
-  final NoteService _noteService = NoteService();
+  late final AuthService _authService;
+  late final NoteService _noteService;
   final TextEditingController _noteController = TextEditingController();
   final TextEditingController _titleController = TextEditingController();
   
   String? _editingNoteId;
   bool _isLoading = false;
+  
+  @override
+  void initState() {
+    super.initState();
+    _authService = AuthService();
+    _noteService = NoteService();
+  }
   
   @override
   void dispose() {
@@ -36,17 +43,16 @@ class _HomeScreenState extends State<HomeScreen> {
     _titleController.text = note?.title ?? '';
     _noteController.text = note?.content ?? '';
     
+    if (!mounted) return;
+
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) {
           return AlertDialog(
             title: Text(
-              note == null ? 'Add New Note' : 'Edit Note',
-              style: GoogleFonts.poppins(
-                fontWeight: FontWeight.w600,
-                color: Colors.blue.shade800,
-              ),
+              note == null ? 'Add Note' : 'Edit Note',
+              style: context.displayLarge.copyWith(fontSize: 20),
             ),
             content: SingleChildScrollView(
               child: Column(
@@ -55,130 +61,111 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   TextField(
                     controller: _titleController,
-                    decoration: InputDecoration(
+                    decoration: const InputDecoration(
                       labelText: 'Title',
                       hintText: 'Enter note title',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      contentPadding: const EdgeInsets.all(12),
                     ),
-                    style: GoogleFonts.poppins(),
+                    maxLength: 100,
+                    style: context.bodyLarge,
+                    onChanged: (_) => setState(() {}),
                   ),
-                  const SizedBox(height: 16),
+                  SizedBox(height: context.mediumSpacing),
                   TextField(
                     controller: _noteController,
-                    maxLines: 5,
-                    minLines: 4,
-                    maxLength: 1000,
-                    decoration: InputDecoration(
+                    decoration: const InputDecoration(
                       labelText: 'Note',
-                      hintText: 'Write your note here...',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      contentPadding: const EdgeInsets.all(12),
+                      hintText: 'Enter your note here',
+                      alignLabelWithHint: true,
                     ),
-                    style: GoogleFonts.poppins(),
-                    textCapitalization: TextCapitalization.sentences,
-                    keyboardType: TextInputType.multiline,
-                    onChanged: (value) => setState(() {}),
+                    maxLines: 5,
+                    maxLength: 1000,
+                    style: context.bodyMedium,
+                    onChanged: (_) => setState(() {}),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 8),
                   Text(
                     '${_noteController.text.length}/1000',
-                    style: GoogleFonts.poppins(
-                      color: Colors.grey[500],
-                      fontSize: 12,
+                    style: context.bodySmall.copyWith(
+                      color: _noteController.text.length > 1000
+                          ? Theme.of(context).colorScheme.error
+                          : Theme.of(context).hintColor,
                     ),
                   ),
                 ],
               ),
             ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
             actions: [
               TextButton(
                 onPressed: _isLoading ? null : () => Navigator.pop(context),
-                child: Text(
-                  'CANCEL',
-                  style: GoogleFonts.poppins(
-                    color: Colors.grey[600],
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
+                child: const Text('CANCEL'),
               ),
               ElevatedButton(
-                onPressed: _isLoading || _titleController.text.trim().isEmpty || _noteController.text.trim().isEmpty
+                onPressed: _isLoading ||
+                        _titleController.text.trim().isEmpty ||
+                        _noteController.text.trim().isEmpty
                     ? null
                     : () async {
+                        if (_titleController.text.trim().isEmpty ||
+                            _noteController.text.trim().isEmpty) {
+                          _showErrorSnackBar('Please fill in all fields');
+                          return;
+                        }
+
                         setState(() => _isLoading = true);
+
                         try {
-                          final title = _titleController.text.trim();
-                          final content = _noteController.text.trim();
-                          
-                          if (note == null) {
-                            // Add new note
-                            final newNote = Note(
-                              id: '', // Auto-generated by Firestore
-                              title: title,
-                              content: content,
-                            );
-                            await _noteService.addNote(user!.uid, newNote);
-                            _showSuccessSnackBar('Note added successfully');
+                          final newNote = Note(
+                            id: _editingNoteId ?? DateTime.now().millisecondsSinceEpoch.toString(),
+                            title: _titleController.text.trim(),
+                            content: _noteController.text.trim(),
+                          );
+
+                          final userId = user?.uid;
+                          if (userId == null) {
+                            throw 'User not authenticated';
+                          }
+
+                          if (_editingNoteId == null) {
+                            await _noteService.addNote(userId, newNote);
                           } else {
-                            // Update existing note
-                            final updatedNote = note.copyWith(
-                              title: title,
-                              content: content,
-                              updatedAt: DateTime.now(),
-                            );
-                            await _noteService.updateNote(user!.uid, updatedNote);
-                            _showSuccessSnackBar('Note updated successfully');
+                            await _noteService.updateNote(userId, newNote);
                           }
+
+                          if (!mounted) return;
                           
-                          if (mounted) {
-                            Navigator.pop(context);
-                          }
+                          Navigator.of(context).pop();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Note ${_editingNoteId == null ? 'added' : 'updated'} successfully'),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
                         } catch (e) {
-                          _showErrorSnackBar('Failed to save note: $e');
+                          if (!mounted) return;
+                          
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text('Error: ${e.toString()}'),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
                         } finally {
                           if (mounted) {
                             setState(() => _isLoading = false);
                           }
                         }
                       },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blue,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  elevation: 0,
-                  disabledBackgroundColor: Colors.blue[100],
-                ),
                 child: _isLoading
                     ? const SizedBox(
                         width: 20,
                         height: 20,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                         ),
                       )
-                    : Text(
-                        note == null ? 'ADD' : 'UPDATE',
-                        style: GoogleFonts.poppins(
-                          fontWeight: FontWeight.w500,
-                          fontSize: 14,
-                        ),
-                      ),
+                    : Text(note == null ? 'ADD' : 'UPDATE'),
               ),
             ],
-            actionsPadding: const EdgeInsets.only(right: 16, bottom: 12, top: 8),
-            contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
           );
         },
       ),
@@ -189,11 +176,21 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.green,
+        content: Text(
+          message,
+          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+            color: Theme.of(context).colorScheme.onPrimary,
+          ),
+        ),
+        backgroundColor: Theme.of(context).colorScheme.primary,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        margin: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 14,
         ),
       ),
     );
@@ -203,11 +200,21 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
+        content: Text(
+          message,
+          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+            color: Theme.of(context).colorScheme.onError,
+          ),
+        ),
+        backgroundColor: Theme.of(context).colorScheme.error,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        margin: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 14,
         ),
       ),
     );
@@ -218,18 +225,23 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Note'),
-        content: const Text('Are you sure you want to delete this note? This action cannot be undone.'),
+        content: const Text('Are you sure you want to delete this note?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.of(context).pop(false),
             child: const Text('CANCEL'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.of(context).pop(true),
             style: TextButton.styleFrom(
-              foregroundColor: Colors.red,
+              foregroundColor: Theme.of(context).colorScheme.error,
             ),
-            child: const Text('DELETE'),
+            child: Text(
+              'DELETE',
+              style: context.labelLarge.copyWith(
+                color: Theme.of(context).colorScheme.error,
+              ),
+            ),
           ),
         ],
       ),
@@ -241,7 +253,7 @@ class _HomeScreenState extends State<HomeScreen> {
         await _noteService.deleteNote(user!.uid, noteId);
         _showSuccessSnackBar('Note deleted successfully');
       } catch (e) {
-        _showErrorSnackBar('Failed to delete note: $e');
+        _showErrorSnackBar('Failed to delete note. Please try again.');
       } finally {
         if (mounted) {
           setState(() => _isLoading = false);
@@ -251,7 +263,25 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String _formatDate(DateTime date) {
-    return DateFormat('MMM d, y • h:mm a').format(date);
+    final now = DateTime.now();
+    final difference = now.difference(date);
+
+    if (difference.inDays == 0) {
+      // Today
+      return 'Today, ${DateFormat('h:mm a').format(date)}';
+    } else if (difference.inDays == 1) {
+      // Yesterday
+      return 'Yesterday, ${DateFormat('h:mm a').format(date)}';
+    } else if (difference.inDays < 7) {
+      // Within a week
+      return '${DateFormat('EEEE, h:mm a').format(date)}';
+    } else if (date.year == now.year) {
+      // This year
+      return DateFormat('MMM d • h:mm a').format(date);
+    } else {
+      // Older dates
+      return DateFormat('MMM d, y • h:mm a').format(date);
+    }
   }
 
   @override
@@ -260,14 +290,18 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: Text(
           'My Notes',
-          style: GoogleFonts.poppins(
+          style: context.displayLarge.copyWith(
+            color: Theme.of(context).colorScheme.onPrimary,
             fontWeight: FontWeight.w600,
           ),
         ),
+        elevation: context.appBarElevation,
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: _authService.signOut,
+            tooltip: 'Sign out',
+            color: Theme.of(context).colorScheme.onPrimary,
           ),
         ],
       ),
@@ -286,25 +320,35 @@ class _HomeScreenState extends State<HomeScreen> {
 
           if (notes.isEmpty) {
             return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.note_add_outlined,
-                    size: 80,
-                    color: Colors.grey[400],
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No notes yet',
-                    style: GoogleFonts.poppins(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.grey[600],
+              child: Padding(
+                padding: const EdgeInsets.all(32.0),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.note_add_outlined,
+                      size: 80,
+                      color: Theme.of(context).hintColor.withOpacity(0.5),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                ],
+                    const SizedBox(height: 24),
+                    Text(
+                      'No notes yet',
+                      style: context.displayMedium?.copyWith(
+                        color: Theme.of(context).hintColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Tap the + button to create your first note',
+                      style: context.bodyLarge?.copyWith(
+                        color: Theme.of(context).hintColor,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
               ),
             );
           }
@@ -315,8 +359,8 @@ class _HomeScreenState extends State<HomeScreen> {
             itemBuilder: (context, index) {
               final note = notes[index];
               return Card(
-                elevation: 2,
-                margin: const EdgeInsets.only(bottom: 16),
+                margin: EdgeInsets.only(bottom: context.mediumSpacing),
+                elevation: context.cardElevation,
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -326,28 +370,31 @@ class _HomeScreenState extends State<HomeScreen> {
                     _showNoteDialog(note: note);
                   },
                   child: Padding(
-                    padding: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(16.0),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Expanded(
                               child: Text(
                                 note.title,
-                                style: GoogleFonts.poppins(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w600,
+                                style: context.displayMedium.copyWith(
+                                  color: Theme.of(context).colorScheme.primary,
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
                             IconButton(
-                              icon: const Icon(Icons.delete_outline, size: 20),
+                              icon: Icon(
+                                Icons.delete_outline,
+                                color: Theme.of(context).colorScheme.error,
+                              ),
                               onPressed: () => _deleteNote(note.id),
-                              padding: EdgeInsets.zero,
+                              padding: const EdgeInsets.all(4),
                               constraints: const BoxConstraints(),
                               tooltip: 'Delete note',
                             ),
@@ -356,8 +403,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         const SizedBox(height: 8),
                         Text(
                           note.content,
-                          style: GoogleFonts.poppins(
-                            color: Colors.grey[800],
+                          style: context.bodyLarge?.copyWith(
+                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.87),
+                            height: 1.5,
                           ),
                           maxLines: 3,
                           overflow: TextOverflow.ellipsis,
@@ -365,9 +413,8 @@ class _HomeScreenState extends State<HomeScreen> {
                         const SizedBox(height: 12),
                         Text(
                           _formatDate(note.updatedAt),
-                          style: GoogleFonts.poppins(
-                            fontSize: 12,
-                            color: Colors.grey[500],
+                          style: context.bodySmall?.copyWith(
+                            color: Theme.of(context).hintColor,
                           ),
                         ),
                       ],
@@ -381,9 +428,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showNoteDialog(),
-        backgroundColor: Colors.blue,
-        foregroundColor: Colors.white,
-        elevation: 2,
+        tooltip: 'Add new note',
         child: const Icon(Icons.add),
       ),
     );
