@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
 import '../../services/auth_service.dart';
+import '../../services/note_service.dart';
+import '../../models/note.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -13,110 +17,137 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final User? user = FirebaseAuth.instance.currentUser;
   final AuthService _authService = AuthService();
+  final NoteService _noteService = NoteService();
   final TextEditingController _noteController = TextEditingController();
+  final TextEditingController _titleController = TextEditingController();
+  
+  String? _editingNoteId;
+  bool _isLoading = false;
+  
+  @override
+  void dispose() {
+    _noteController.dispose();
+    _titleController.dispose();
+    super.dispose();
+  }
 
-  void _showAddNoteDialog() {
-    _noteController.clear();
+  void _showNoteDialog({Note? note}) {
+    _editingNoteId = note?.id;
+    _titleController.text = note?.title ?? '';
+    _noteController.text = note?.content ?? '';
+    
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setState) {
           return AlertDialog(
             title: Text(
-              'Add New Note',
+              note == null ? 'Add New Note' : 'Edit Note',
               style: GoogleFonts.poppins(
                 fontWeight: FontWeight.w600,
                 color: Colors.blue.shade800,
               ),
             ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                TextField(
-                  controller: _noteController,
-                  maxLines: 5,
-                  minLines: 4,
-                  maxLength: 1000,
-                  decoration: InputDecoration(
-                    hintText: 'Write your note here...',
-                    hintStyle: GoogleFonts.poppins(
-                      color: Colors.grey[400],
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: Colors.grey[300]!,
-                        width: 1.0,
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: _titleController,
+                    decoration: InputDecoration(
+                      labelText: 'Title',
+                      hintText: 'Enter note title',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
+                      contentPadding: const EdgeInsets.all(12),
                     ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: Colors.grey[300]!,
-                        width: 1.0,
+                    style: GoogleFonts.poppins(),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _noteController,
+                    maxLines: 5,
+                    minLines: 4,
+                    maxLength: 1000,
+                    decoration: InputDecoration(
+                      labelText: 'Note',
+                      hintText: 'Write your note here...',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
+                      contentPadding: const EdgeInsets.all(12),
                     ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: Colors.blue.shade400!,
-                        width: 2.0,
-                      ),
-                    ),
-                    contentPadding: const EdgeInsets.all(16),
-                    counterStyle: GoogleFonts.poppins(
+                    style: GoogleFonts.poppins(),
+                    textCapitalization: TextCapitalization.sentences,
+                    keyboardType: TextInputType.multiline,
+                    onChanged: (value) => setState(() {}),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${_noteController.text.length}/1000',
+                    style: GoogleFonts.poppins(
                       color: Colors.grey[500],
                       fontSize: 12,
                     ),
                   ),
-                  style: GoogleFonts.poppins(
-                    color: Colors.grey[800],
-                    fontSize: 14,
-                  ),
-                  textCapitalization: TextCapitalization.sentences,
-                  keyboardType: TextInputType.multiline,
-                  textInputAction: TextInputAction.newline,
-                  onChanged: (value) {
-                    setState(() {});
-                  },
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '${_noteController.text.length}/1000',
-                  style: GoogleFonts.poppins(
-                    color: Colors.grey[500],
-                    fontSize: 12,
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context),
-                style: TextButton.styleFrom(
-                  foregroundColor: Colors.grey[600],
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                ),
+                onPressed: _isLoading ? null : () => Navigator.pop(context),
                 child: Text(
                   'CANCEL',
                   style: GoogleFonts.poppins(
+                    color: Colors.grey[600],
                     fontWeight: FontWeight.w500,
-                    fontSize: 14,
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
               ElevatedButton(
-                onPressed: _noteController.text.trim().isEmpty
+                onPressed: _isLoading || _titleController.text.trim().isEmpty || _noteController.text.trim().isEmpty
                     ? null
-                    : () {
-                        // TODO: Save the note
-                        Navigator.pop(context);
-                        _showSuccessSnackBar('Note saved successfully');
+                    : () async {
+                        setState(() => _isLoading = true);
+                        try {
+                          final title = _titleController.text.trim();
+                          final content = _noteController.text.trim();
+                          
+                          if (note == null) {
+                            // Add new note
+                            final newNote = Note(
+                              id: '', // Auto-generated by Firestore
+                              title: title,
+                              content: content,
+                            );
+                            await _noteService.addNote(user!.uid, newNote);
+                            _showSuccessSnackBar('Note added successfully');
+                          } else {
+                            // Update existing note
+                            final updatedNote = note.copyWith(
+                              title: title,
+                              content: content,
+                              updatedAt: DateTime.now(),
+                            );
+                            await _noteService.updateNote(user!.uid, updatedNote);
+                            _showSuccessSnackBar('Note updated successfully');
+                          }
+                          
+                          if (mounted) {
+                            Navigator.pop(context);
+                          }
+                        } catch (e) {
+                          _showErrorSnackBar('Failed to save note: $e');
+                        } finally {
+                          if (mounted) {
+                            setState(() => _isLoading = false);
+                          }
+                        }
                       },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.blue,
@@ -128,13 +159,22 @@ class _HomeScreenState extends State<HomeScreen> {
                   elevation: 0,
                   disabledBackgroundColor: Colors.blue[100],
                 ),
-                child: Text(
-                  'SAVE',
-                  style: GoogleFonts.poppins(
-                    fontWeight: FontWeight.w500,
-                    fontSize: 14,
-                  ),
-                ),
+                child: _isLoading
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      )
+                    : Text(
+                        note == null ? 'ADD' : 'UPDATE',
+                        style: GoogleFonts.poppins(
+                          fontWeight: FontWeight.w500,
+                          fontSize: 14,
+                        ),
+                      ),
               ),
             ],
             actionsPadding: const EdgeInsets.only(right: 16, bottom: 12, top: 8),
@@ -146,155 +186,72 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showSuccessSnackBar(String message) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          message,
-          style: GoogleFonts.poppins(color: Colors.white),
-        ),
+        content: Text(message),
         backgroundColor: Colors.green,
         behavior: SnackBarBehavior.floating,
-        margin: const EdgeInsets.all(16),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(10),
         ),
       ),
     );
   }
 
-  Future<void> _signOut() async {
-    try {
-      await _authService.signOut();
-      if (mounted) {
-        Navigator.pushReplacementNamed(context, '/login');
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error signing out: $e'),
-            backgroundColor: Colors.red,
+  void _showErrorSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteNote(String noteId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Note'),
+        content: const Text('Are you sure you want to delete this note? This action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('CANCEL'),
           ),
-        );
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.red,
+            ),
+            child: const Text('DELETE'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && mounted) {
+      try {
+        setState(() => _isLoading = true);
+        await _noteService.deleteNote(user!.uid, noteId);
+        _showSuccessSnackBar('Note deleted successfully');
+      } catch (e) {
+        _showErrorSnackBar('Failed to delete note: $e');
+      } finally {
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
       }
     }
   }
 
-  Future<void> _showSignOutDialog() async {
-    return showDialog<void>(
-      context: context,
-      barrierDismissible: true,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text(
-            'Sign Out',
-            style: GoogleFonts.poppins(
-              fontWeight: FontWeight.w600,
-              color: Colors.blue.shade800,
-            ),
-          ),
-          content: Text(
-            'Are you sure you want to sign out?',
-            style: GoogleFonts.poppins(),
-          ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text(
-                'Cancel',
-                style: GoogleFonts.poppins(
-                  color: Colors.grey[600],
-                ),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                _signOut();
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                elevation: 0,
-              ),
-              child: Text(
-                'Sign Out',
-                style: GoogleFonts.poppins(
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildProfileMenu() {
-    return PopupMenuButton<String>(
-      onSelected: (value) {
-        if (value == 'signout') {
-          _showSignOutDialog();
-        }
-      },
-      itemBuilder: (BuildContext context) => [
-        PopupMenuItem<String>(
-          value: 'profile',
-          child: Row(
-            children: [
-              Icon(Icons.person_outline, color: Colors.blue.shade800, size: 20),
-              const SizedBox(width: 12),
-              Text(
-                'Profile',
-                style: GoogleFonts.poppins(
-                  color: Colors.blue.shade800,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const PopupMenuDivider(),
-        PopupMenuItem<String>(
-          value: 'signout',
-          child: Row(
-            children: [
-              Icon(Icons.logout, color: Colors.red.shade400, size: 20),
-              const SizedBox(width: 12),
-              Text(
-                'Sign Out',
-                style: GoogleFonts.poppins(
-                  color: Colors.red.shade400,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-      child: Container(
-        margin: const EdgeInsets.only(right: 8),
-        child: CircleAvatar(
-          backgroundColor: Colors.blue.shade100,
-          child: Text(
-            user?.displayName?.isNotEmpty == true
-                ? user!.displayName![0].toUpperCase()
-                : user?.email?.isNotEmpty == true
-                    ? user!.email![0].toUpperCase()
-                    : 'U',
-            style: GoogleFonts.poppins(
-              color: Colors.blue.shade800,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-      ),
-    );
+  String _formatDate(DateTime date) {
+    return DateFormat('MMM d, y • h:mm a').format(date);
   }
 
   @override
@@ -304,80 +261,130 @@ class _HomeScreenState extends State<HomeScreen> {
         title: Text(
           'My Notes',
           style: GoogleFonts.poppins(
-            color: Colors.blue.shade800,
             fontWeight: FontWeight.w600,
-            fontSize: 22,
           ),
         ),
         actions: [
-          _buildProfileMenu(),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: _authService.signOut,
+          ),
         ],
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: false,
       ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              'Welcome, ${user?.displayName ?? 'User'}!',
-              style: GoogleFonts.poppins(
-                fontSize: 24,
-                fontWeight: FontWeight.bold,
-                color: Colors.blue.shade800,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              user?.email ?? '',
-              style: GoogleFonts.poppins(
-                fontSize: 14,
-                color: Colors.grey[600],
-              ),
-            ),
-            const SizedBox(height: 40),
-            // Placeholder for notes list - will be implemented next
-            Container(
-              padding: const EdgeInsets.all(24),
+      body: StreamBuilder<List<Note>>(
+        stream: _noteService.getNotesStream(user?.uid ?? ''),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Center(child: Text('Error: ${snapshot.error}'));
+          }
+
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final notes = snapshot.data ?? [];
+
+          if (notes.isEmpty) {
+            return Center(
               child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
                     Icons.note_add_outlined,
-                    size: 72,
-                    color: Colors.grey[300],
+                    size: 80,
+                    color: Colors.grey[400],
                   ),
                   const SizedBox(height: 16),
                   Text(
                     'No notes yet',
                     style: GoogleFonts.poppins(
-                      fontSize: 18,
-                      color: Colors.grey[600],
+                      fontSize: 20,
                       fontWeight: FontWeight.w500,
+                      color: Colors.grey[600],
                     ),
                   ),
                   const SizedBox(height: 8),
-                  Text(
-                    'Tap the + button to create your first note',
-                    style: GoogleFonts.poppins(
-                      color: Colors.grey[500],
-                      fontSize: 14,
-                    ),
-                  ),
                 ],
               ),
-            ),
-          ],
-        ),
+            );
+          }
+
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: notes.length,
+            itemBuilder: (context, index) {
+              final note = notes[index];
+              return Card(
+                elevation: 2,
+                margin: const EdgeInsets.only(bottom: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () {
+                    _showNoteDialog(note: note);
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                note.title,
+                                style: GoogleFonts.poppins(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, size: 20),
+                              onPressed: () => _deleteNote(note.id),
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              tooltip: 'Delete note',
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          note.content,
+                          style: GoogleFonts.poppins(
+                            color: Colors.grey[800],
+                          ),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          _formatDate(note.updatedAt),
+                          style: GoogleFonts.poppins(
+                            fontSize: 12,
+                            color: Colors.grey[500],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _showAddNoteDialog,
+        onPressed: () => _showNoteDialog(),
         backgroundColor: Colors.blue,
-        child: const Icon(Icons.add, color: Colors.white, size: 28),
-        elevation: 4,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        foregroundColor: Colors.white,
+        elevation: 2,
+        child: const Icon(Icons.add),
       ),
     );
   }
